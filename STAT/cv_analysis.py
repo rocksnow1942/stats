@@ -12,8 +12,8 @@ global savefolder,plotbackend
 plotbackend = '.svg'
 
 
-def workfunc(data,kw,st,xT,yT):
-    re=Analyzer(data,xT=xT,yT=yT)
+def workfunc(data,kw,st):
+    re=Analyzer(data)
     result = dict.fromkeys(st)
     if any([("residuals" in stat) or ("predict" in stat) for stat in st]):
         r = getattr(re,"residuals")
@@ -299,7 +299,6 @@ class Analyzer(DataMixin):
                 f.write('\n'.join(result))
         return result
 
-
     def remove(self,key,idx):
         data = self.data.copy()
         data[key]=self.data[key].copy()
@@ -321,7 +320,6 @@ class Analyzer(DataMixin):
 
     def residuals(self,method='linear',resample=False,multiset=True,resi=None,**kwargs):
         if resi: return resi
-
         resi={i:[] for i in self.data}
         if not resample: para = self.fit(multiset=multiset, method=method)[0]
         for i,j in self.data.items():
@@ -369,11 +367,22 @@ class Analyzer(DataMixin):
         else:
             return ci_dict
 
+    def mean(self,format=True,**kwargs):
+        r={self.xTr(i):np.mean(j) for i,j in self.data.items()}
+        if format:
+            data=sorted([i for i in r.items()],key=(lambda x:x[0]))
+            df=pd.DataFrame({'Conc.':[i[0] for i in data],'Mean':[i[1] for i in data]})
+            return df
+        else:
+            return r
+
     def mean_CV(self,format=True,**kwargs):
-        return self.cv_calculator(conc_dict=self.rawdata,format=format)
+        converted={self.xTr(i):k for i,k in self.data.items()}
+        return self.cv_calculator(conc_dict=converted,format=format)
 
     def mean_CI(self,format=True,**kwargs):
-        return self.CI_calculator(conc_dict=self.rawdata,format=format)
+        converted={self.xTr(i):k for i,k in self.data.items()}
+        return self.CI_calculator(conc_dict=converted,format=format)
 
     def predict_CV(self,format=True,resi=None,**kwargs):
         resi=resi or self.residuals(**kwargs)
@@ -384,22 +393,28 @@ class Analyzer(DataMixin):
         predict = {i:[_+i for _ in j] for i,j in resi.items()}
         return self.CI_calculator(conc_dict=predict,format=format)
 
-    def predict_mean(self,resi=None,**kwargs):
+    def predict_mean(self,resi=None,format=True,**kwargs):
         resi=resi or self.residuals(**kwargs)
-        return {i:i+np.mean(j) for i,j in resi.items()}
+        r = {i:i+np.mean(j) for i,j in resi.items()}
+        if format:
+            data=sorted([i for i in r.items()],key=(lambda x:x[0]))
+            df=pd.DataFrame({'Conc.':[i[0] for i in data],'Mean':[i[1] for i in data]})
+            return df
+        else:
+            return r
 
-    def plot_scatter(self,raw,ax=None,save=False,ylabel='None',log=False):
+    def plot_scatter(self,raw,ax=None,save=False,ylabel='None',log=False,**kwargs):
         raw_x=[self.xTt(i) for i,j in raw.items() for k in j]
         raw_y=[k for i,j in raw.items() for k in j]
         if ax==None:fig,ax = plt.subplots(figsize=(8,6))
         ax.plot(raw_x,raw_y,'bx')
         xs=sorted(list(set(raw_x)))
         ax.set_xticks(xs)
-        ax.set_xticklabels(["{:.1f}".format(self.xTr(i)) for i in xs])
+        ax.set_xticklabels(["{:.3g}".format(self.xTr(i)) for i in xs])
         ax.set_title('Residual plot')
         ax.set_xlabel('Fibrinogen concentration (nM)')
         ax.set_ylabel(ylabel)
-        # if log or self.xT=='log':ax.set_xscale('log')
+        if log:ax.set_xscale('log')
         if save:
             save=save+plotbackend if isinstance(save,str) else "Unnamed_scatter_plot"+plotbackend
             save=self.ifexist(save)
@@ -412,7 +427,7 @@ class Analyzer(DataMixin):
             save=save if isinstance(save,str) else "RESI_pFib-tFib"
         self.plot_scatter(resi,ax=ax,save=save,ylabel=ylabel,log=log)
 
-    def plot_fit(self,ax=None,multiset=True,save=False,method='linear',log=False):
+    def plot_fit(self,ax=None,multiset=True,save=False,method='linear',log=False,**kwargs):
         xlow = min(self.x) - 0.1*(max(self.x) - min(self.x))
         xhigh =max(self.x) + 0.1*(max(self.x) - min(self.x))
         x_ = (np.linspace(xlow,xhigh,100))
@@ -425,11 +440,11 @@ class Analyzer(DataMixin):
         # if method=='linear':
         ax.plot(x_,func(x_,**lp),'r:',x_,func(x_,**up),'r:')
         ax.plot(raw_x,raw_y,'bx')
-        _p=['{}:{:.3f}'.format(i,j) for i,j in p.items()]
+        _p=['{}:{:.4g}'.format(i,j) for i,j in p.items()]
         # locs,_=plt.xticks()
         ax.set_xticks(self.x)
-        ax.set_xticklabels(["{:.1f}".format(self.xTr(i)) for i in self.x])
-        ax.set_title('{} fit, {}; r2={:.4f}'.format(method,'; '.join(_p),r_2))
+        ax.set_xticklabels(["{:.3g}".format(self.xTr(i)) for i in self.x])
+        ax.set_title('{} fit, {}; r2={:.4g}'.format(method,'; '.join(_p),r_2))
         ax.set_xlabel('Fibrinogen concentration (nM)')
         ax.set_ylabel('Raw signal {}'.format('('+self.yT+')'))
         if log: ax.set_xscale('log')
@@ -442,7 +457,7 @@ class Analyzer(DataMixin):
     def shuffle(self,n=100,seed=42,**kwargs):
         np.random.seed(seed)
         for i in range(n):
-            temp={i:list(np.random.choice(j,len(j))) for i,j in self.rawdata.items()}
+            temp={i:list(np.random.choice(j,len(j))) for i,j in self.data.items()}
             yield temp
 
     def bootstrap(self,stats=None,size=1000,**kwargs):
@@ -450,7 +465,7 @@ class Analyzer(DataMixin):
         stats is a list of method names to bootstrap.
         """
         kwargs.update(format=False)
-        task=partial(workfunc,kw=kwargs,st=stats,xT=self.xT,yT=self.yT)
+        task=partial(workfunc,kw=kwargs,st=stats,)
         # """test"""
         # workload=list(self.shuffle(size))
         # result = fb.poolwrapper(task,workload,total=size,showprogress=True)
@@ -464,13 +479,14 @@ class Analyzer(DataMixin):
             summary_2 = {i:[] for i in result[0][stat].keys()}
             for i in result:
                 for j,d in i[stat].items():
-                    if stat=='residuals':
-                        summary[j].extend(d)
-                    elif 'CI' in stat:
+                    if 'CI' in stat:
                         summary[j].append(d[0])
                         summary_2[j].append(d[1])
                     else:
-                        summary[j].append(d)
+                        if isinstance(d,list):
+                            summary[j].extend(d)
+                        else:
+                            summary[j].append(d)
             if 'CI' in stat:
                 summary = {"{:.2f}_LOW".format(k):i for k,i in summary.items()}
                 summary_2 = {"{:.2f}_UP".format(k):i for k,i in summary_2.items()}
@@ -484,7 +500,7 @@ class Analyzer(DataMixin):
         return total_result
 
     def plot_bootstrap(self,save=False,stats=None,cumu=False,rmoutlier=True,**kwargs):
-        possible_stats=['residuals','predict_CI','predict_CV','predict_mean','mean_CI','mean_CV']
+        possible_stats=['mean','residuals','predict_CI','predict_CV','predict_mean','mean_CI','mean_CV']
         if stats=='all':
             stat_list=possible_stats
         else:
@@ -502,7 +518,7 @@ class Analyzer(DataMixin):
             fig.suptitle('Bootstrap {}, repeat={:.1E}'.format(stat,repeats),size=16)
             for ax,(conc,resi),n in zip(axes,result.items(),self.samplesize()*2):
                 title= conc if isinstance(conc,str) else '{:.2f}'.format(conc)
-                labelcorrector=n if stat=='residuals' else 1
+                labelcorrector=n if stat in ['residuals'] else 1
                 ax.set_title("{}, N={}, {:.1f}%".format(title,n,100*len(resi)/(labelcorrector*repeats)))
                 ax.hist(resi,bins=500,histtype='step',density=True,cumulative=cumu)
                 ax.set_xlabel('{}'.format(stat))
@@ -520,28 +536,24 @@ class Analyzer(DataMixin):
     def samplesize(self):
         return [len(self.data[i]) for i in self.x]
 
-    def analyze(self,multiset=True,method='linear',save=False,range=None):
+    def analyze(self,multiset=True,method='linear',save=False,range=None,**kwargs):
         if range: self=self.filter(*range)
         fig,axes = plt.subplots(1,2,figsize=(12,5))
         fig.suptitle('Fit & Residual, N={}'.format(self.samplesize()),size=16)
-        self.plot_fit(ax=axes[0],multiset=multiset,method=method)
-        self.plot_resi(ax=axes[1],method=method,resample=True)
+        self.plot_fit(ax=axes[0],multiset=multiset,method=method,**kwargs)
+        self.plot_resi(ax=axes[1],method=method,resample=True,**kwargs)
         plt.tight_layout(rect=[0, 0, 1, 0.95])
+        result = '\n'.join(["Raw signal Mean:",str(self.mean()),'Raw signal CV:',str(self.mean_CV()),
+                            "Predicted Fib Mean", str(self.predict_mean()),'Predicted Fib CV:',
+                            str(self.predict_CV(method=method,resample=True)),'Predicted Fib CI:',
+                            str(self.predict_CI(method=method,resample=True))])
         if save:
             save=save+plotbackend if isinstance(save,str) else 'ANA_{}_{}'.format(method,multiset*'ms')+plotbackend
             save =self.ifexist(save)
             plt.savefig(save)
-            result = ['Raw signal CV:',str(self.mean_CV()),'Predicted Fib CV:',
-                        str(self.predict_CV(method=method,resample=True)),'Predicted Fib CI:',
-                        str(self.predict_CI(method=method,resample=True))]
             txt_save = self.ifexist('Data_Analysis.txt')
             with open(txt_save,'wt') as f:
-                f.write('\n'.join(result))
-        else: plt.show()
-
-        print('Raw signal CV:')
-        print(self.mean_CV())
-        print('Predicted Fib CV:')
-        print(self.predict_CV(method=method,resample=True))
-        print('Predicted Fib CI:')
-        print(self.predict_CI(method=method,resample=True))
+                f.write(result)
+        else:
+            plt.show()
+            print(result)

@@ -30,8 +30,9 @@ def enter_para(data):
         inverse=input('Flip sign of data (y/n)?(default=n)\n') or 'n'
         xT=input("Transform X values? (log,) : (default=no)\n") or 'no'
         yT=input("Transform Y values? (log,) : (default=no)\n") or 'no'
-        result = dict(mb=mb,aq=aq,aqnorm=aqnorm,chip=chip,inverse=inverse)
-        transform =dict(xT=xT,yT=yT)
+        range=input("Enter X value range (1-99)? (default=all) \n") or 'all'
+        result = dict(mb=mb,aq=aq,aqnorm=aqnorm,chip=chip,inverse=inverse,)
+        transform =dict(xT=xT,yT=yT,range=range)
         separator()
         display=['Data Processing Parameters']
         display.extend(["{:>10} : {}".format(k,i) for k,i in result.items()])
@@ -43,6 +44,7 @@ def enter_para(data):
             cycle=False
         separator()
     result['inverse']=bool(result['inverse']!='n')
+    transform['range'] =[float(range.split('-')[0]),float(range.split('-')[1])] if range!='all' else None
     analysis(data,result,transform)
 
 
