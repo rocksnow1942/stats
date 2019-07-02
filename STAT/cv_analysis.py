@@ -12,8 +12,8 @@ global savefolder,plotbackend
 plotbackend = '.svg'
 
 
-def workfunc(data,kw,st):
-    re=Analyzer(data)
+def workfunc(data,kw,st,xT,yT):
+    re=Analyzer(data,xT=xT,yT=yT,transform=False)
     result = dict.fromkeys(st)
     if any([("residuals" in stat) or ("predict" in stat) for stat in st]):
         r = getattr(re,"residuals")
@@ -32,8 +32,7 @@ class DataMixin:
         holds different methods to treat data.
         'avg': average on non zero values.
         'T'/'M'/'B': select top or middle or bottom electrode on all chips.
-        int 1-5: select i-th data point on
-
+        int 1-5: select i-th data point on one electrode.
         """
         if method=='avg':
             return np.mean([i for i in data if i])
@@ -88,108 +87,6 @@ class DataMixin:
         else:
             return path.join(savefolder,name)
 
-class Data(DataMixin):
-    """
-    Data holding class for chip data.
-    initialize by providing csv filename and MB signal counts.
-    after init, have attributes df, raw,
-    df: dict of DataFrame holding data for each concentration point
-    raw: dict of Chip class.
-    after zip, will collapse all chip and electrode data based on provided methods into
-    a single data point measurement for each concentration point.
-    the zipped value is stored in .data attribute.
-    zip again will refresh .data with new data.
-    """
-    def __init__(self,filename,mb=5):
-        """
-        filename: the .csv file holding data.
-        have 1 row for concentration, followed by all chip electrode data at that concentration.
-        electrode data should be arraged as T/M/B order on a single chip, and repeat chip data.
-        vertically, should have MB data on top and AQ data below if applicable.
-        specify mb to indicate how many rows are for MB signal. default first 5 data points are for MB.
-        """
-        global savefolder
-        filefolder = path.dirname(filename)
-        savefolder= path.join(filefolder,'analysis')
-        if not path.isdir(savefolder):
-            makedirs(savefolder)
-        with open(filename) as f:
-            data=csv.reader(f)
-            r={}
-            key=None
-            content=[]
-            for i in data:
-                judge=[_ for _ in i if _!='']
-                if len(judge)==1:
-                    if key is not None:r[key]=pd.DataFrame(content).fillna(0)
-                    key = float(judge[0])
-                    r[key]=None
-                    content=[]
-                    continue
-                if any(i): content.append(pd.to_numeric(i,errors='coerce'))
-            r[key]=pd.DataFrame(content).fillna(0)
-        self.df=r
-        self.conc=sorted(list(r.keys()))
-        if mb:self.organizedata(mb=mb)
-
-    def organizedata(self,mb):
-        """
-        parse imported dataframe into raw dict.
-        {conc:list of chips}
-        chips: chip class holding mb and aq signal.
-        """
-        data = {}
-        for i in self.conc:
-            data[i]=[]
-            df = self.df[i]
-            for j in range(0,len(df.columns),3):
-                chip = []
-                for k in range(3):
-                    aq=df.iloc[mb:,j+k].tolist() if mb<df.shape[0] else None
-                    chip.append(Eode(df.iloc[0:mb,j+k].tolist(),aq))
-                chip=Chip(*chip)
-                if chip:data[i].append(chip)
-        self.raw=data
-        return self
-
-    def zip(self,mb='avg',aq='avg',aqnorm=False,chip='avg',errors='ignore',inverse=False):
-        """
-        aggregate chip and electrode data by different methods.
-        mb: method to aggregate mb signal on a electrode.
-        aq: method to aggregate aq signal on a electrode.
-        aqnorm: method to apply aq norm. if use aq, will use AQ raw signal to calculate.
-        chip: method to aggregate electrode signal on a chip. can be T/M/B for top middle or bottom chip.
-        each zip will refresh the data attribute of Data class. this is the converted data.
-        """
-        data={conc:[Chip(*[eode.aggregate(mb,aq,aqnorm) for eode in _chip]).aggregate(chip,errors).top
-                    for _chip in chips] for conc,chips in self.raw.items()}
-        if errors == 'delete':
-            self.data={i:[_ for _ in j if _!=None] for i,j in data.items()}
-        else:
-            self.data=data
-        if inverse:self.inverse()
-
-        self.log=dict(mb=mb,aq=aq,aqnorm=aqnorm,chip=chip,errors=errors,inverse=inverse)
-
-        return self
-
-    def chipcount(self):
-        return {i:len(j) for i,j in self.raw.items()}
-
-    def inverse(self):
-        """
-        flip the sign of data.
-        """
-        for i in self.data:
-            self.data[i]=[-k for k in self.data[i]]
-
-    def analyze(self,range=None,xT='',yT=''):
-        """
-        return an analyze object.
-        """
-        log=self.log.copy()
-        log.update(xT=xT,yT=yT,range=range)
-        return Analyzer(self.data,range=range,xT=xT,yT=yT,log=log)
 
 class Chip(DataMixin):
     """
@@ -265,20 +162,122 @@ class Eode(DataMixin):
         else:
             return self
 
+class Data(DataMixin):
+    """
+    Data holding class for chip data.
+    initialize by providing csv filename and MB signal counts.
+    after init, have attributes df, raw,
+    df: dict of DataFrame holding data for each concentration point
+    raw: dict of Chip class.
+    after zip, will collapse all chip and electrode data based on provided methods into
+    a single data point measurement for each concentration point.
+    the zipped value is stored in .data attribute.
+    zip again will refresh .data with new data.
+    """
+    def __init__(self,filename,mb=5):
+        """
+        filename: the .csv file holding data.
+        have 1 row for concentration, followed by all chip electrode data at that concentration.
+        electrode data should be arraged as T/M/B order on a single chip, and repeat chip data.
+        vertically, should have MB data on top and AQ data below if applicable.
+        specify mb to indicate how many rows are for MB signal. default first 5 data points are for MB.
+        """
+        global savefolder
+        filefolder = path.dirname(filename)
+        savefolder= path.join(filefolder,'analysis')
+        if not path.isdir(savefolder):
+            makedirs(savefolder)
+        with open(filename) as f:
+            data=csv.reader(f)
+            r={}
+            key=None
+            content=[]
+            for i in data:
+                judge=[_ for _ in i if _!='']
+                if len(judge)==1:
+                    if key is not None:r[key]=pd.DataFrame(content).fillna(0)
+                    key = float(judge[0])
+                    r[key]=None
+                    content=[]
+                    continue
+                if any(i): content.append(pd.to_numeric(i,errors='coerce'))
+            r[key]=pd.DataFrame(content).fillna(0)
+        self.df=r
+        self.conc=sorted(list(r.keys()))
+        if mb:self.organizedata(mb=mb)
 
+    def organizedata(self,mb):
+        """
+        parse imported dataframe into raw dict.
+        {conc:list of chips}
+        chips: chip class holding mb and aq signal.
+        """
+        data = {}
+        for i in self.conc:
+            data[i]=[]
+            df = self.df[i]
+            for j in range(0,len(df.columns),3):
+                chip = []
+                for k in range(3):
+                    aq=df.iloc[mb:,j+k].tolist() if mb<df.shape[0] else None
+                    chip.append(Eode(df.iloc[0:mb,j+k].tolist(),aq))
+                chip=Chip(*chip)
+                if chip:data[i].append(chip)
+        self.raw=data
+        return self
+
+    def zip(self,mb='avg',aq='avg',aqnorm=False,chip='avg',errors='ignore',inverse=False,**kwargs):
+        """
+        aggregate chip and electrode data by different methods.
+        mb: method to aggregate mb signal on a electrode.
+        aq: method to aggregate aq signal on a electrode.
+        aqnorm: method to apply aq norm. if use aq, will use AQ raw signal to calculate.
+        chip: method to aggregate electrode signal on a chip. can be T/M/B for top middle or bottom chip.
+        each zip will refresh the data attribute of Data class. this is the converted data.
+        """
+        data={conc:[Chip(*[eode.aggregate(mb,aq,aqnorm) for eode in _chip]).aggregate(chip,errors).top
+                    for _chip in chips] for conc,chips in self.raw.items()}
+        if errors == 'delete':
+            self.data={i:[_ for _ in j if _!=None] for i,j in data.items()}
+        else:
+            self.data=data
+        if inverse:self.inverse()
+
+        self.log=dict(mb=mb,aq=aq,aqnorm=aqnorm,chip=chip,errors=errors,inverse=inverse)
+
+        return self
+
+    def chipcount(self):
+        return {i:len(j) for i,j in self.raw.items()}
+
+    def inverse(self):
+        """
+        flip the sign of data.
+        """
+        for i in self.data:
+            self.data[i]=[-k for k in self.data[i]]
+
+    def analyze(self,range=None,xT='',yT='',**kwargs):
+        """
+        return an analyze object.
+        """
+        log=self.log.copy()
+        log.update(xT=xT,yT=yT,range=range)
+        return Analyzer(self.data,range=range,xT=xT,yT=yT,log=log)
 
 class Analyzer(DataMixin):
     transform={'log':np.log10,'log_r':lambda x:10**x,'':lambda x:x,
                 '_r':lambda x:x,'no':lambda x:x,'no_r':lambda x:x}
-    def __init__(self,data,range=None,xT='',yT='',log=None):
+    def __init__(self,data,range=None,xT='',yT='',transform=True,log=None):
         ## temporary solution for log transformation to remove 0 x.
         if xT=='log': range=[0.001,1e6]
 
         if range:
             data = {i:j for i,j in data.items() if range[0]<=i<=range[1]}
         self.rawdata=data
-        if xT: data={self.transform[xT](k):i for k,i in data.items()}
-        if yT: data={k:[self.transform[yT](_) for _ in i] for k,i in data.items()}
+        if transform:
+            if xT: data={self.transform[xT](k):i for k,i in data.items()}
+            if yT: data={k:[self.transform[yT](_) for _ in i] for k,i in data.items()}
         self.data=data
         self.x,self.y=np.array([i for i in self.data]),[np.array(j) for i,j in self.data.items()]
         self.xT=xT
@@ -393,6 +392,10 @@ class Analyzer(DataMixin):
         predict = {i:[_+i for _ in j] for i,j in resi.items()}
         return self.CI_calculator(conc_dict=predict,format=format)
 
+    def predict(self,resi=None,**kwargs):
+        resi=resi or self.residuals(**kwargs)
+        return {i:[i+_ for _ in j] for i,j in resi.items()}
+
     def predict_mean(self,resi=None,format=True,**kwargs):
         resi=resi or self.residuals(**kwargs)
         r = {i:i+np.mean(j) for i,j in resi.items()}
@@ -420,6 +423,8 @@ class Analyzer(DataMixin):
             save=self.ifexist(save)
             plt.tight_layout()
             plt.savefig(save)
+            plt.clf()
+            plt.close('all')
 
     def plot_resi(self,ax=None,save=False,ylabel='Predict Fib - True Fib /nM',log=False,resample=True,**kwargs):
         resi=self.residuals(resample=resample,**kwargs)
@@ -453,6 +458,8 @@ class Analyzer(DataMixin):
             save=save+plotbackend if isinstance(save,str) else 'FIT_{}_r{:.2f}'.format(method,r_2)+plotbackend
             save=self.ifexist(save)
             plt.savefig(save)
+            plt.clf()
+            plt.close('all')
 
     def shuffle(self,n=100,seed=42,**kwargs):
         np.random.seed(seed)
@@ -465,7 +472,7 @@ class Analyzer(DataMixin):
         stats is a list of method names to bootstrap.
         """
         kwargs.update(format=False)
-        task=partial(workfunc,kw=kwargs,st=stats,)
+        task=partial(workfunc,kw=kwargs,st=stats,xT=self.xT,yT=self.yT)
         # """test"""
         # workload=list(self.shuffle(size))
         # result = fb.poolwrapper(task,workload,total=size,showprogress=True)
@@ -488,8 +495,8 @@ class Analyzer(DataMixin):
                         else:
                             summary[j].append(d)
             if 'CI' in stat:
-                summary = {"{:.2f}_LOW".format(k):i for k,i in summary.items()}
-                summary_2 = {"{:.2f}_UP".format(k):i for k,i in summary_2.items()}
+                summary = {"{:.3g}_LOW".format(k):i for k,i in summary.items()}
+                summary_2 = {"{:.3g}_UP".format(k):i for k,i in summary_2.items()}
                 summary.update(summary_2)
                 # total_result[stat]=summary
                 # return summary
@@ -499,8 +506,8 @@ class Analyzer(DataMixin):
 
         return total_result
 
-    def plot_bootstrap(self,save=False,stats=None,cumu=False,rmoutlier=True,**kwargs):
-        possible_stats=['mean','residuals','predict_CI','predict_CV','predict_mean','mean_CI','mean_CV']
+    def plot_bootstrap(self,save=False,stats=None,cumu=False,rmoutlier=True,shareax=False,**kwargs):
+        possible_stats=['mean','mean_CI','mean_CV','residuals','predict','predict_CI','predict_CV','predict_mean',]
         if stats=='all':
             stat_list=possible_stats
         else:
@@ -512,23 +519,31 @@ class Analyzer(DataMixin):
             if rmoutlier:
                 for i in result.keys():
                     result[i] = self.rmoutlier(result[i],rmoutlier)
-            panel = (max(2,len(result.keys())//4+bool(len(result.keys())%4)),4)
-            fig,axes = plt.subplots(*panel,figsize=(12,2.5*panel[0]))
-            axes=[i for k in axes for i in k]
+            if shareax:
+                fig,_ = plt.subplots(figsize=(8,6))
+                axes = [_]*len(result)
+                _.set_yscale('log')
+            else:
+                panel = (max(2,len(result.keys())//4+bool(len(result.keys())%4)),4)
+                fig,axes = plt.subplots(*panel,figsize=(12,2.5*panel[0]))
+                axes=[i for k in axes for i in k]
             fig.suptitle('Bootstrap {}, repeat={:.1E}'.format(stat,repeats),size=16)
             for ax,(conc,resi),n in zip(axes,result.items(),self.samplesize()*2):
                 title= conc if isinstance(conc,str) else '{:.2f}'.format(conc)
                 labelcorrector=n if stat in ['residuals'] else 1
                 ax.set_title("{}, N={}, {:.1f}%".format(title,n,100*len(resi)/(labelcorrector*repeats)))
-                ax.hist(resi,bins=500,histtype='step',density=True,cumulative=cumu)
+                label=conc if isinstance(conc,str) else "{:.3g}".format(conc)
+                ax.hist(resi,bins=500,histtype='step',density=True,cumulative=cumu,label=label)
                 ax.set_xlabel('{}'.format(stat))
                 ax.set_ylabel('Frequency')
+                if shareax:ax.legend()
             plt.tight_layout(rect=[0, 0, 1, 0.95])
             if save:
                 to_save = save+plotbackend if isinstance(save,str) else "BS_{}".format(stat)+plotbackend
                 to_save = self.ifexist(to_save)
                 plt.savefig(to_save)
                 plt.clf()
+                plt.close('all')
             else:
                 plt.show()
                 plt.clf()
@@ -536,12 +551,12 @@ class Analyzer(DataMixin):
     def samplesize(self):
         return [len(self.data[i]) for i in self.x]
 
-    def analyze(self,multiset=True,method='linear',save=False,range=None,**kwargs):
+    def analyze(self,multiset=True,method='linear',save=False,range=None,resample=True,**kwargs):
         if range: self=self.filter(*range)
         fig,axes = plt.subplots(1,2,figsize=(12,5))
         fig.suptitle('Fit & Residual, N={}'.format(self.samplesize()),size=16)
         self.plot_fit(ax=axes[0],multiset=multiset,method=method,**kwargs)
-        self.plot_resi(ax=axes[1],method=method,resample=True,**kwargs)
+        self.plot_resi(ax=axes[1],method=method,resample=resample,**kwargs)
         plt.tight_layout(rect=[0, 0, 1, 0.95])
         result = '\n'.join(["Raw signal Mean:",str(self.mean()),'Raw signal CV:',str(self.mean_CV()),
                             "Predicted Fib Mean", str(self.predict_mean()),'Predicted Fib CV:',
@@ -551,9 +566,12 @@ class Analyzer(DataMixin):
             save=save+plotbackend if isinstance(save,str) else 'ANA_{}_{}'.format(method,multiset*'ms')+plotbackend
             save =self.ifexist(save)
             plt.savefig(save)
+            plt.clf()
+            plt.close('all')
             txt_save = self.ifexist('Data_Analysis.txt')
             with open(txt_save,'wt') as f:
                 f.write(result)
         else:
             plt.show()
+            plt.clf()
             print(result)

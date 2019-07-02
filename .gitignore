@@ -5,6 +5,7 @@ __pycache__/
 *.py[cod]
 run.py
 test.py
+temp.py
 # C extensions
 *.so
 
