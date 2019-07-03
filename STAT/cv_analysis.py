@@ -6,10 +6,25 @@ import csv
 from scipy.stats import t
 from functools import partial
 from os import path,makedirs
-
+import json
 global savefolder,plotbackend
 
 plotbackend = '.svg'
+
+def load_para(filename):
+    with open(filename,'rt') as f:
+        result=json.load(f)
+    analyze=dict(save=True,)
+    bootstrap=dict(size=10000,stats='all',rmoutlier=True,cumu=False,resample=True,save=True)
+    transform = result['transform']
+    analyze.update(result['analyze'])
+    bootstrap.update(result['bootstrap'])
+    zip=result['zip']
+    return dict(zip=zip,transform=transform,analyze=analyze,bootstrap=bootstrap)
+
+def write_para(filename,para):
+    with open(filename,'wt') as f:
+        json.dump(para,f,indent=4)
 
 
 def workfunc(data,kw,st,xT,yT):
@@ -81,12 +96,21 @@ class DataMixin:
             return [i for i in data if (mean-r*sig)<i<(mean+r*sig)]
 
     def ifexist(self,name):
+        savefolder=self.save_loc
+        if not path.isdir(savefolder):
+            makedirs(savefolder)
         if path.isfile(path.join(savefolder,name)):
-            print('File {} already exist, add +.'.format(name))
-            return self.ifexist(''.join(name.split('.')[0:-1]+['+.']+[name.split('.')[-1]]))
+            print('File {} already exist, add number ~ '.format(name))
+            prefix = name.split('.')[0:-1]
+            affix=name.split('.')[-1]
+            if len(prefix[-1])<3 or prefix[-1][-3]!='~':
+                prefix[-1] +='~01'
+            else:
+                prefix[-1] = prefix[-1][0:-2]+"{:02d}".format(int(prefix[-1][-2:])+1)
+            newname='.'.join(prefix+[affix])
+            return self.ifexist(newname)
         else:
             return path.join(savefolder,name)
-
 
 class Chip(DataMixin):
     """
@@ -182,11 +206,10 @@ class Data(DataMixin):
         vertically, should have MB data on top and AQ data below if applicable.
         specify mb to indicate how many rows are for MB signal. default first 5 data points are for MB.
         """
-        global savefolder
+        # global savefolder
         filefolder = path.dirname(filename)
         savefolder= path.join(filefolder,'analysis')
-        if not path.isdir(savefolder):
-            makedirs(savefolder)
+        self.save_loc=savefolder
         with open(filename) as f:
             data=csv.reader(f)
             r={}
@@ -252,26 +275,26 @@ class Data(DataMixin):
 
     def inverse(self):
         """
-        flip the sign of data.
+        flip the sign of data. autonomously.
         """
-        for i in self.data:
-            self.data[i]=[-k for k in self.data[i]]
+        if next(iter(self.data.values()))[0] <0:
+            for i in self.data:
+                self.data[i]=[-k for k in self.data[i]]
 
-    def analyze(self,range=None,xT='',yT='',**kwargs):
+    def transform(self,range=None,xT='',yT='',**kwargs):
         """
         return an analyze object.
         """
         log=self.log.copy()
         log.update(xT=xT,yT=yT,range=range)
-        return Analyzer(self.data,range=range,xT=xT,yT=yT,log=log)
+        return Analyzer(self.data,range=range,xT=xT,yT=yT,log=log,save_loc=self.save_loc)
 
 class Analyzer(DataMixin):
     transform={'log':np.log10,'log_r':lambda x:10**x,'':lambda x:x,
                 '_r':lambda x:x,'no':lambda x:x,'no_r':lambda x:x}
-    def __init__(self,data,range=None,xT='',yT='',transform=True,log=None):
+    def __init__(self,data,range=None,xT='',yT='',transform=True,log=None,save_loc=None):
         ## temporary solution for log transformation to remove 0 x.
         if xT=='log': range=[0.001,1e6]
-
         if range:
             data = {i:j for i,j in data.items() if range[0]<=i<=range[1]}
         self.rawdata=data
@@ -287,6 +310,7 @@ class Analyzer(DataMixin):
         self.yTt=self.transform[yT]
         self.yTr=self.transform[yT+'_r']
         self.log=log
+        if save_loc:self.save_loc=save_loc
 
     def savelog(self,save=True):
         result=['Data Processing Parameters']
@@ -312,7 +336,27 @@ class Analyzer(DataMixin):
             x,y=self.x,self.y
         para=fb.fitting_data(x,y,method,multi_set=multiset)
         rsquare=fb.r_squared_calc(self.x,self.y,para[0],method)
+        self.fit_result = dict(zip(["fit","lower","upper"],para))
+        self.fit_result.update(method=method)
         return (*para,rsquare)
+
+    def read_fib_conc(self,measurement):
+        """
+        use the stored data to fit, if not already fitted.
+        then back calculate the conc.
+        """
+        try:
+            measurement = np.array(measurement)
+        except TypeError:
+            print("weird measurement input.")
+        if not getattr(self,"fit_result",None):
+            self.fit()
+        method=self.fit_result['method']
+        fitpara=self.fit_result["fit"]
+        func = getattr(fb,method+'_r')
+        result = self.xTr(func(measurement,**fitpara))
+        return result
+
 
     def filter(self,range=None):
         return Analyzer(self.rawdata,range=range,xT=self.xT,yT=self.yT)
@@ -344,8 +388,9 @@ class Analyzer(DataMixin):
         else:
             cv_dict = {i:self.cv_cacu(j) for i,j in conc_dict.items()}
         if format:
+            format='CV' if isinstance(format,bool) else format
             data=sorted([i for i in cv_dict.items()],key=(lambda x:x[0]))
-            df=pd.DataFrame({'Conc.':[i[0] for i in data],'CV':[i[1] for i in data]})
+            df=pd.DataFrame({'Conc.':[i[0] for i in data],format:[i[1] for i in data]}).set_index('Conc.')
             return df
         else:
             return cv_dict
@@ -360,9 +405,10 @@ class Analyzer(DataMixin):
         _data=conc_dict
         ci_dict = {i:self.ci_cacu(j) for i,j in _data.items()}
         if format:
+            format=('95% CI lower','95% CI upper') if isinstance(format,bool) else format
             re=sorted([i for i in ci_dict.items()],key=(lambda x:x[0]))
-            df=pd.DataFrame({'Conc.':[i[0] for i in re],'95% CI lower':[i[1][0] for i in re],'95% CI upper':[i[1][1] for i in re]})
-            return df
+            df=pd.DataFrame({'Conc.':[i[0] for i in re],format[0]:[i[1][0] for i in re],format[1]:[i[1][1] for i in re]})
+            return df.set_index('Conc.')
         else:
             return ci_dict
 
@@ -370,27 +416,31 @@ class Analyzer(DataMixin):
         r={self.xTr(i):np.mean(j) for i,j in self.data.items()}
         if format:
             data=sorted([i for i in r.items()],key=(lambda x:x[0]))
-            df=pd.DataFrame({'Conc.':[i[0] for i in data],'Mean':[i[1] for i in data]})
-            return df
+            df=pd.DataFrame({'Conc.':[i[0] for i in data],'Raw_Mean':[i[1] for i in data]})
+            return df.set_index('Conc.')
         else:
             return r
 
     def mean_CV(self,format=True,**kwargs):
         converted={self.xTr(i):k for i,k in self.data.items()}
-        return self.cv_calculator(conc_dict=converted,format=format)
+        label= "Raw_CV" if format else False
+        return self.cv_calculator(conc_dict=converted,format=label)
 
     def mean_CI(self,format=True,**kwargs):
         converted={self.xTr(i):k for i,k in self.data.items()}
-        return self.CI_calculator(conc_dict=converted,format=format)
+        label= ("Raw_CI_L","Raw_CI_H") if format else False
+        return self.CI_calculator(conc_dict=converted,format=label)
 
     def predict_CV(self,format=True,resi=None,**kwargs):
         resi=resi or self.residuals(**kwargs)
-        return self.cv_calculator(conc_dict=resi,format=format,correct=True)
+        label= "Predict_CV" if format else False
+        return self.cv_calculator(conc_dict=resi,format=label,correct=True)
 
     def predict_CI(self,format=True,resi=None,**kwargs):
         resi=resi or self.residuals(**kwargs)
         predict = {i:[_+i for _ in j] for i,j in resi.items()}
-        return self.CI_calculator(conc_dict=predict,format=format)
+        label= ("Predict_CI_L","Predict_CI_H") if format else False
+        return self.CI_calculator(conc_dict=predict,format=label)
 
     def predict(self,resi=None,**kwargs):
         resi=resi or self.residuals(**kwargs)
@@ -401,8 +451,8 @@ class Analyzer(DataMixin):
         r = {i:i+np.mean(j) for i,j in resi.items()}
         if format:
             data=sorted([i for i in r.items()],key=(lambda x:x[0]))
-            df=pd.DataFrame({'Conc.':[i[0] for i in data],'Mean':[i[1] for i in data]})
-            return df
+            df=pd.DataFrame({'Conc.':[i[0] for i in data],'Predict_Mean':[i[1] for i in data]})
+            return df.set_index('Conc.')
         else:
             return r
 
@@ -461,8 +511,8 @@ class Analyzer(DataMixin):
             plt.clf()
             plt.close('all')
 
-    def shuffle(self,n=100,seed=42,**kwargs):
-        np.random.seed(seed)
+    def shuffle(self,n=100,**kwargs):
+        # np.random.seed(seed)
         for i in range(n):
             temp={i:list(np.random.choice(j,len(j))) for i,j in self.data.items()}
             yield temp
@@ -506,47 +556,68 @@ class Analyzer(DataMixin):
 
         return total_result
 
-    def plot_bootstrap(self,save=False,stats=None,cumu=False,rmoutlier=True,shareax=False,**kwargs):
+    def _plot_histgram(self,title,save,result,stat,repeats,
+                        shareax=True,cumu=False,log=True,bins=500,**kwargs):
+        """
+        title: prefix of supertitle
+        save: must be a string, used as prefix of saved files
+        shareax: to share x axis or not
+        result: dict of {1:[1,2,3,4],2:1,2,3,4,}
+        stat: name to be used for x axis and saved filename.
+        repeats:number of repeats
+        cumu: plot cumulative density plot or not.
+        """
+        if shareax:
+            fig,_ = plt.subplots(figsize=(8,6))
+            axes = [_]*len(result)
+            if log:_.set_yscale('log')
+            _.set_title("N={}, {}".format(self.samplesize()," ".join(["{:.0f}%".format(100*len(result[i])/(repeats)) for i in sorted(result.keys())])))
+        else:
+            panel = (max(2,len(result.keys())//4+bool(len(result.keys())%4)),4)
+            fig,axes = plt.subplots(*panel,figsize=(12,2.5*panel[0]))
+            axes=[i for k in axes for i in k]
+        fig.suptitle('{} {}, Rpt={:.1E}'.format(title,stat,repeats),size=16)
+        for ax,(conc,resi),n in zip(axes,result.items(),self.samplesize()*2):
+            title= conc if isinstance(conc,str) else '{:.2f}'.format(conc)
+            labelcorrector=n if stat in ['residuals','predict'] else 1
+            if not shareax:
+                ax.set_title("{}, N={}, {:.1f}%".format(title,n,100*len(resi)/(labelcorrector*repeats)))
+            label=conc if isinstance(conc,str) else "{:.3g}".format(conc)
+            ax.hist(resi,bins=bins,histtype='step',density=True,cumulative=cumu,label=label)
+            ax.set_xlabel('{}'.format(stat))
+            ax.set_ylabel('Frequency')
+            if shareax:ax.legend()
+        plt.tight_layout(rect=[0, 0, 1, 0.95])
+        if save:
+            to_save = "{}_{}".format(save,stat)+plotbackend
+            to_save = self.ifexist(to_save)
+            plt.savefig(to_save)
+            plt.clf()
+            plt.close('all')
+        else:
+            plt.show()
+            plt.clf()
+
+    def plot_bootstrap(self,save=False,stats=None,rmoutlier=True,**kwargs):
         possible_stats=['mean','mean_CI','mean_CV','residuals','predict','predict_CI','predict_CV','predict_mean',]
         if stats=='all':
             stat_list=possible_stats
+        elif isinstance(stats,list):
+            stat_list=[i for i in stats if i in possible_stats]
+        elif isinstance(stats,int):
+            slice = [int(i) for i in list(str(stats))]
+            stat_list=[possible_stats[i] for i in slice]
         else:
             stat_list=[i for i in possible_stats if stats in i]
         repeats=kwargs.get('size',1000)
         total_result = self.bootstrap(stats=stat_list,**kwargs)
+        save = save and "BS"
         for stat in stat_list:
             result = total_result[stat]
             if rmoutlier:
                 for i in result.keys():
                     result[i] = self.rmoutlier(result[i],rmoutlier)
-            if shareax:
-                fig,_ = plt.subplots(figsize=(8,6))
-                axes = [_]*len(result)
-                _.set_yscale('log')
-            else:
-                panel = (max(2,len(result.keys())//4+bool(len(result.keys())%4)),4)
-                fig,axes = plt.subplots(*panel,figsize=(12,2.5*panel[0]))
-                axes=[i for k in axes for i in k]
-            fig.suptitle('Bootstrap {}, repeat={:.1E}'.format(stat,repeats),size=16)
-            for ax,(conc,resi),n in zip(axes,result.items(),self.samplesize()*2):
-                title= conc if isinstance(conc,str) else '{:.2f}'.format(conc)
-                labelcorrector=n if stat in ['residuals'] else 1
-                ax.set_title("{}, N={}, {:.1f}%".format(title,n,100*len(resi)/(labelcorrector*repeats)))
-                label=conc if isinstance(conc,str) else "{:.3g}".format(conc)
-                ax.hist(resi,bins=500,histtype='step',density=True,cumulative=cumu,label=label)
-                ax.set_xlabel('{}'.format(stat))
-                ax.set_ylabel('Frequency')
-                if shareax:ax.legend()
-            plt.tight_layout(rect=[0, 0, 1, 0.95])
-            if save:
-                to_save = save+plotbackend if isinstance(save,str) else "BS_{}".format(stat)+plotbackend
-                to_save = self.ifexist(to_save)
-                plt.savefig(to_save)
-                plt.clf()
-                plt.close('all')
-            else:
-                plt.show()
-                plt.clf()
+            self._plot_histgram(title='Bootstrap',result=result,stat=stat,repeats=repeats,save=save,**kwargs)
 
     def samplesize(self):
         return [len(self.data[i]) for i in self.x]
@@ -558,20 +629,31 @@ class Analyzer(DataMixin):
         self.plot_fit(ax=axes[0],multiset=multiset,method=method,**kwargs)
         self.plot_resi(ax=axes[1],method=method,resample=resample,**kwargs)
         plt.tight_layout(rect=[0, 0, 1, 0.95])
-        result = '\n'.join(["Raw signal Mean:",str(self.mean()),'Raw signal CV:',str(self.mean_CV()),
-                            "Predicted Fib Mean", str(self.predict_mean()),'Predicted Fib CV:',
-                            str(self.predict_CV(method=method,resample=True)),'Predicted Fib CI:',
-                            str(self.predict_CI(method=method,resample=True))])
+        dfs=[self.mean(),self.mean_CV(),self.predict_mean(),self.predict_CV(method=method,resample=True),
+                self.predict_CI(method=method,resample=True)]
+        df = pd.concat(dfs,axis=1)
+        # result = '\n'.join(["Raw signal Mean:",str(self.mean()),'Raw signal CV:',str(self.mean_CV()),
+        #                     "Predicted Fib Mean", str(self.predict_mean()),'Predicted Fib CV:',
+        #                     str(self.predict_CV(method=method,resample=True)),'Predicted Fib CI:',
+        #                     str(self.predict_CI(method=method,resample=True))])
         if save:
             save=save+plotbackend if isinstance(save,str) else 'ANA_{}_{}'.format(method,multiset*'ms')+plotbackend
             save =self.ifexist(save)
             plt.savefig(save)
             plt.clf()
             plt.close('all')
-            txt_save = self.ifexist('Data_Analysis.txt')
-            with open(txt_save,'wt') as f:
-                f.write(result)
+            tosave = self.ifexist('Data_Analysis.xlsx')
+            writer=pd.ExcelWriter(tosave)
+            df.to_excel(writer,index=True,sheet_name='Analysis',engine='xlsxwriter')
+            for idx, col in enumerate(df):
+                series = df[col]
+                max_len = max(series.astype(str).map(len).max(), len(str(series.name)))+1
+                writer.sheets['Analysis'].set_column(idx, idx, max_len)
+            writer.save()
+            writer.close()
+            # with open(tosave,'wt') as f:
+            #     f.write(result)
         else:
             plt.show()
             plt.clf()
-            print(result)
+            return df

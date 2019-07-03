@@ -1,4 +1,4 @@
-from .cv_analysis import Data, Analyzer
+from .cv_analysis import Data, Analyzer, load_para, write_para
 from .simulator import Simu
 
 # import os, sys #,json

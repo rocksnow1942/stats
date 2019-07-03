@@ -37,7 +37,7 @@ def enter_para(data):
             aq=input('AQ method (avg, sd_rmo, p_rmo, mid): (default=avg)\n') or 'avg'
             aqnorm = input('AQ norm. method (div, exp, aq): (defalut=no)\n') or 'no'
             chip=input('Chip method (avg, T/M/B,): (default=avg)\n') or 'avg'
-            inverse=input('Flip sign of data (y/n)?(default=n)\n') or 'n'
+            inverse=input('Make sign of data to be positive(y/n)?(default=y)\n') or 'y'
             xT=input("Transform X values? (log,) : (default=no)\n") or 'no'
             yT=input("Transform Y values? (log,) : (default=no)\n") or 'no'
             range=input("Enter X value range (1-99)? (default=all) \n") or 'all'
@@ -55,7 +55,7 @@ def enter_para(data):
             cycle=False
         separator()
     if not config:
-        result['inverse']=bool(result['inverse']!='n')
+        result['inverse']=bool(result['inverse']=='y')
         transform['range'] =[float(range.split('-')[0]),float(range.split('-')[1])] if range!='all' else None
         analysis(data,result,transform)
     else:
@@ -71,7 +71,7 @@ def analysis(rawdata,result,transform):
         analyze.update(result['analyze'])
         bootstrap.update(result['bootstrap'])
         result=result['zip']
-    data=rawdata.zip(**result).analyze(**transform)
+    data=rawdata.zip(**result).transform(**transform)
     cycle=True
     options={"1":"Plot Fit & Residuals", "2":"Bootstrap","3":"All", "0":"Quit Analysis"}
     while cycle:

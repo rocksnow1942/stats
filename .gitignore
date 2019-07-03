@@ -6,6 +6,9 @@ __pycache__/
 run.py
 test.py
 temp.py
+*.svg
+*.txt
+*.xlsx
 # C extensions
 *.so
 
