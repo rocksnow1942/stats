@@ -583,8 +583,8 @@ class Analyzer(DataMixin):
             if not shareax:
                 ax.set_title("{}, N={}, {:.1f}%".format(title,n,100*len(resi)/(labelcorrector*repeats)))
             label=conc if isinstance(conc,str) else "{:.3g}".format(conc)
-            ax.hist(resi,bins=bins,histtype='step',density=True,cumulative=cumu,label=label)
-            ax.set_xlabel('{}'.format(stat))
+            _,bingap,_=ax.hist(resi,bins=bins,histtype='step',density=True,cumulative=cumu,label=label)
+            ax.set_xlabel('{},bin={:.3E}'.format(stat,bingap[1]-bingap[0]))
             ax.set_ylabel('Frequency')
             if shareax:ax.legend()
         plt.tight_layout(rect=[0, 0, 1, 0.95])
