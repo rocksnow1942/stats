@@ -8,7 +8,6 @@ supported_fit_method = ['kd','ic_50','ric_50','kd_with_depletion','kd_ns','kd_ns
 
 
 
-
 def poolwrapper(task,workload,initializer=None,initargs=None,chunks=None,total=None,desc='Progress:',showprogress=False):
     workerheads=psutil.cpu_count(logical=False)
     worker=multiprocessing.Pool(workerheads,initializer,initargs)

@@ -1,5 +1,5 @@
 import pandas as pd
-import STAT.fit_binding as fb
+from . import fit_binding as fb
 import matplotlib.pyplot as plt
 import numpy as np
 import csv
@@ -329,6 +329,16 @@ class Analyzer(DataMixin):
         if len(data[key])==0: data.pop(key)
         return np.array([i for i in data]),[np.array(j) for i,j in data.items()]
 
+    @property
+    def xy(self):
+        a = []
+        b = []
+        for k,i in self.data.items():
+            for j in i:
+                a.append(k)
+                b.append(j)
+        return a,b
+
     def fit(self,multiset=True,method='linear',data=None):
         if data:
             x,y=data
@@ -356,7 +366,6 @@ class Analyzer(DataMixin):
         func = getattr(fb,method+'_r')
         result = self.xTr(func(measurement,**fitpara))
         return result
-
 
     def filter(self,range=None):
         return Analyzer(self.rawdata,range=range,xT=self.xT,yT=self.yT)
@@ -577,16 +586,23 @@ class Analyzer(DataMixin):
             fig,axes = plt.subplots(*panel,figsize=(12,2.5*panel[0]))
             axes=[i for k in axes for i in k]
         fig.suptitle('{} {}, Rpt={:.1E}'.format(title,stat,repeats),size=16)
+        xbingap=[]
         for ax,(conc,resi),n in zip(axes,result.items(),self.samplesize()*2):
             title= conc if isinstance(conc,str) else '{:.2f}'.format(conc)
             labelcorrector=n if stat in ['residuals','predict'] else 1
-            if not shareax:
-                ax.set_title("{}, N={}, {:.1f}%".format(title,n,100*len(resi)/(labelcorrector*repeats)))
+
             label=conc if isinstance(conc,str) else "{:.3g}".format(conc)
             _,bingap,_=ax.hist(resi,bins=bins,histtype='step',density=True,cumulative=cumu,label=label)
-            ax.set_xlabel('{},bin={:.3E}'.format(stat,bingap[1]-bingap[0]))
+            if not shareax:
+                ax.set_title("{}, N={}, {:.1f}%".format(title,n,100*len(resi)/(labelcorrector*repeats)))
+                ax.set_xlabel('{},bin={:.2E}'.format(stat,bingap[1]-bingap[0]))
+                ax.set_ylabel('Frequency')
+            else:
+                xbingap.append("{:.2E}".format(bingap[1]-bingap[0]))
+        if shareax:
+            ax.legend()
+            ax.set_xlabel('{},bin={}'.format(stat,','.join(xbingap)))
             ax.set_ylabel('Frequency')
-            if shareax:ax.legend()
         plt.tight_layout(rect=[0, 0, 1, 0.95])
         if save:
             to_save = "{}_{}".format(save,stat)+plotbackend

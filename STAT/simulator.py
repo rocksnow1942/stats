@@ -65,16 +65,17 @@ class Simu(Analyzer):
             result.append(np.random.normal(s,cv*s/100.0))
         return result
 
-    def simu_accuracy(self,n=100,save=False,**kwargs):
+    def simu_accuracy(self,n=100,save=False,refreshfitting=True,**kwargs):
         """
         should simulate accuracy using the confusion matrix
         """
         # result = {i:[] for i in self.seed['conc']}
         temp=np.zeros((n,len(self.seed['conc'])),dtype=float)
         for i in range(n):
-            self.__init__(**self.seed)
             measurement=self.generate_reading()
-            _=self.fit()
+            if refreshfitting:
+                self.__init__(**self.seed)
+                _=self.fit()
             temp[i,:]=self.read_fib_conc(measurement)
         result={i:temp[:,k] for k,i in enumerate(self.seed['conc'])}
         save = save and "SimuAcc"
@@ -82,4 +83,4 @@ class Simu(Analyzer):
         max(self.seed['sig'])/min(self.seed['sig']),np.mean(self.seed['size']))
         self._plot_histgram(title="SimuAcc",save=save,result=result,
                 stat=stats,repeats=n,**kwargs)
-        # return confusion_matrix
+        # return confusion_matrixx
