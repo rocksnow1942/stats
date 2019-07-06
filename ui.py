@@ -29,7 +29,7 @@ def enter_para(data):
             with open(filename,'rt') as f:
                 para=json.load(f)
             separator()
-            para.pop('comments')
+            para.pop('comments',None)
             print(json.dumps(para,indent=4))
             separator()
         else:
@@ -90,7 +90,7 @@ def analysis(rawdata,result,transform):
             break
         else:
             continue
-        data.savelog()
+        # data.savelog()
         print("Analysis Done. ")
         separator()
     separator()

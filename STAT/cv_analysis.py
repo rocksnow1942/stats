@@ -5,10 +5,10 @@ import numpy as np
 import csv
 from scipy.stats import t
 from functools import partial
-from os import path,makedirs
+from os import path,makedirs,getcwd
 import json
 global savefolder,plotbackend
-
+import seaborn as sns
 plotbackend = '.svg'
 
 def load_para(filename):
@@ -30,10 +30,10 @@ def write_para(filename,para):
 def workfunc(data,kw,st,xT,yT):
     re=Analyzer(data,xT=xT,yT=yT,transform=False)
     result = dict.fromkeys(st)
-    if any([("residuals" in stat) or ("predict" in stat) for stat in st]):
-        r = getattr(re,"residuals")
-        residual = r(**kw)
-        kw.update(resi=residual)
+    # if any([("residuals" in stat) or ("predict" in stat) for stat in st]):
+    #     r = getattr(re,"residuals")
+    #     residual = r(**kw)
+    #     kw.update(resi=residual)
     for stat in st:
         r = getattr(re,stat)
         result[stat]=r(**kw)
@@ -96,7 +96,7 @@ class DataMixin:
             return [i for i in data if (mean-r*sig)<i<(mean+r*sig)]
 
     def ifexist(self,name):
-        savefolder=self.save_loc
+        savefolder=getattr(self,"save_loc",getcwd())
         if not path.isdir(savefolder):
             makedirs(savefolder)
         if path.isfile(path.join(savefolder,name)):
@@ -311,16 +311,16 @@ class Analyzer(DataMixin):
         self.yTr=self.transform[yT+'_r']
         self.log=log
         if save_loc:self.save_loc=save_loc
-
-    def savelog(self,save=True):
-        result=['Data Processing Parameters']
-        for k,i in self.log.items():
-            result.append("{:>10} : {}".format(k,i))
-        if save:
-            txt_save = self.ifexist('Data_Ana_Log.txt')
-            with open(txt_save,'wt') as f:
-                f.write('\n'.join(result))
-        return result
+    #
+    # def savelog(self,save=True):
+    #     result=['Data Processing Parameters']
+    #     for k,i in self.log.items():
+    #         result.append("{:>10} : {}".format(k,i))
+    #     if save:
+    #         txt_save = self.ifexist('Data_Ana_Log.txt')
+    #         with open(txt_save,'wt') as f:
+    #             f.write('\n'.join(result))
+    #     return result
 
     def remove(self,key,idx):
         data = self.data.copy()
@@ -329,15 +329,27 @@ class Analyzer(DataMixin):
         if len(data[key])==0: data.pop(key)
         return np.array([i for i in data]),[np.array(j) for i,j in data.items()]
 
-    @property
-    def xy(self):
+    def xy(self,format="list"):
         a = []
         b = []
         for k,i in self.data.items():
             for j in i:
                 a.append(k)
                 b.append(j)
-        return a,b
+        if format=='df':
+            return pd.DataFrame(dict(x=a,y=b))
+        elif format == "list":
+            return a,b
+        elif format == "pair":
+            return list(zip(a,b))
+        elif format == "array":
+            return np.array([a,b])
+
+    def fill_na(self,input,fill=""):
+        maxlen = max([len(i) for i in input.values()])
+        new = {i:j+[fill]*(maxlen-len(j)) for i,j in input.items()}
+        return new
+
 
     def fit(self,multiset=True,method='linear',data=None):
         if data:
@@ -346,8 +358,9 @@ class Analyzer(DataMixin):
             x,y=self.x,self.y
         para=fb.fitting_data(x,y,method,multi_set=multiset)
         rsquare=fb.r_squared_calc(self.x,self.y,para[0],method)
-        self.fit_result = dict(zip(["fit","lower","upper"],para))
-        self.fit_result.update(method=method)
+        if not data:
+            self.fit_result = dict(zip(["fit","lower","upper"],para))
+            self.fit_result.update(method=str(method),multiset=str(multiset))
         return (*para,rsquare)
 
     def read_fib_conc(self,measurement):
@@ -370,10 +383,13 @@ class Analyzer(DataMixin):
     def filter(self,range=None):
         return Analyzer(self.rawdata,range=range,xT=self.xT,yT=self.yT)
 
-    def residuals(self,method='linear',resample=False,multiset=True,resi=None,**kwargs):
-        if resi: return resi
+    def residuals(self,method='linear',resample=False,multiset=True,redo=False,**kwargs):
+        if getattr(self,"_residuals",False) and (not redo):
+            return self._residuals
         resi={i:[] for i in self.data}
-        if not resample: para = self.fit(multiset=multiset, method=method)[0]
+        if not getattr(self,"fit_result",None):
+            self.fit(multiset=multiset,method=method)
+        if not resample: para = self.fit_result['fit']
         for i,j in self.data.items():
             for idx,k in enumerate(j):
                 if resample:
@@ -382,7 +398,10 @@ class Analyzer(DataMixin):
                 func=getattr(fb,method+'_r')
                 result=self.xTr(func(k,**para))
                 resi[i].append(result-self.xTr(i))
-        return {self.xTr(i):k for i,k in resi.items()}
+        residual_={self.xTr(i):k for i,k in resi.items()}
+        self._residuals=residual_
+        self.fit_result.update(resample=str(resample))
+        return residual_
 
     def cv_cacu(self,data):
         std=np.std(data,ddof=1)
@@ -440,23 +459,27 @@ class Analyzer(DataMixin):
         label= ("Raw_CI_L","Raw_CI_H") if format else False
         return self.CI_calculator(conc_dict=converted,format=label)
 
-    def predict_CV(self,format=True,resi=None,**kwargs):
-        resi=resi or self.residuals(**kwargs)
+    def predict_CV(self,format=True,**kwargs):
+        resi=getattr(self,"_residuals",None) or self.residuals(**kwargs)
+        # resi=resi or self.residuals(**kwargs)
         label= "Predict_CV" if format else False
         return self.cv_calculator(conc_dict=resi,format=label,correct=True)
 
-    def predict_CI(self,format=True,resi=None,**kwargs):
-        resi=resi or self.residuals(**kwargs)
+    def predict_CI(self,format=True,**kwargs):
+        resi=getattr(self,"_residuals",None) or self.residuals(**kwargs)
+        # resi=resi or self.residuals(**kwargs)
         predict = {i:[_+i for _ in j] for i,j in resi.items()}
         label= ("Predict_CI_L","Predict_CI_H") if format else False
         return self.CI_calculator(conc_dict=predict,format=label)
 
-    def predict(self,resi=None,**kwargs):
-        resi=resi or self.residuals(**kwargs)
+    def predict(self,**kwargs):
+        resi=getattr(self,"_residuals",None) or self.residuals(**kwargs)
+        # resi=resi or self.residuals(**kwargs)
         return {i:[i+_ for _ in j] for i,j in resi.items()}
 
-    def predict_mean(self,resi=None,format=True,**kwargs):
-        resi=resi or self.residuals(**kwargs)
+    def predict_mean(self,format=True,**kwargs):
+        resi=getattr(self,"_residuals",None) or self.residuals(**kwargs)
+        # resi=resi or self.residuals(**kwargs)
         r = {i:i+np.mean(j) for i,j in resi.items()}
         if format:
             data=sorted([i for i in r.items()],key=(lambda x:x[0]))
@@ -476,6 +499,7 @@ class Analyzer(DataMixin):
         ax.set_title('Residual plot')
         ax.set_xlabel('Fibrinogen concentration (nM)')
         ax.set_ylabel(ylabel)
+        ax.set_ylim(bottom=min(raw_y)-0.1*(max(raw_y)-min(raw_y)), top=max(raw_y)+0.1*(max(raw_y)-min(raw_y)))
         if log:ax.set_xscale('log')
         if save:
             save=save+plotbackend if isinstance(save,str) else "Unnamed_scatter_plot"+plotbackend
@@ -491,7 +515,34 @@ class Analyzer(DataMixin):
             save=save if isinstance(save,str) else "RESI_pFib-tFib"
         self.plot_scatter(resi,ax=ax,save=save,ylabel=ylabel,log=log)
 
-    def plot_fit(self,ax=None,multiset=True,save=False,method='linear',log=False,**kwargs):
+    def plot_fit(self,option=1,**kwargs):
+        if option==1:
+            self.plot_fit_1(**kwargs)
+        else:
+            self.plot_fit_2(**kwargs)
+
+
+    def plot_fit_1(self,ax=None,save=False,method='linear',log=False,**kwargs):
+        p,lp,up,r_2 = self.fit(multiset=False,method=method)
+        if ax==None:fig,ax = plt.subplots(figsize=(8,6))
+        data = self.xy("df")
+        sns.regplot('x','y',data=data,ci=95,scatter_kws={"color":"b"},marker="x",ax=ax)
+        _p=['{}:{:.4g}'.format(i,j) for i,j in p.items()]
+        ax.set_xticks(self.x)
+        ax.set_xticklabels(["{:.3g}".format(self.xTr(i)) for i in self.x])
+        ax.set_title('{} fit, {}; r2={:.4g}'.format(method,'; '.join(_p),r_2))
+        ax.set_xlabel('Fibrinogen concentration (nM)')
+        ax.set_ylabel('Raw signal {}'.format('('+self.yT+')'))
+        if log: ax.set_xscale('log')
+        if save:
+            plt.tight_layout()
+            save=save+plotbackend if isinstance(save,str) else 'FIT_{}_r{:.2f}'.format(method,r_2)+plotbackend
+            save=self.ifexist(save)
+            plt.savefig(save)
+            plt.clf()
+            plt.close('all')
+
+    def plot_fit_2(self,ax=None,multiset=True,save=False,method='linear',log=False,**kwargs):
         xlow = min(self.x) - 0.1*(max(self.x) - min(self.x))
         xhigh =max(self.x) + 0.1*(max(self.x) - min(self.x))
         x_ = (np.linspace(xlow,xhigh,100))
@@ -565,29 +616,36 @@ class Analyzer(DataMixin):
 
         return total_result
 
-    def _plot_histgram(self,title,save,result,stat,repeats,
+    def _plot_histgram(self,result,save=False,title=None,stat=None,repeats=0,
                         shareax=True,cumu=False,log=True,bins=500,**kwargs):
         """
         title: prefix of supertitle
         save: must be a string, used as prefix of saved files
         shareax: to share x axis or not
-        result: dict of {1:[1,2,3,4],2:1,2,3,4,}
+        result: dict of data {1:[1,2,3,4],2:1,2,3,4,}
         stat: name to be used for x axis and saved filename.
         repeats:number of repeats
         cumu: plot cumulative density plot or not.
         """
+        title = title or "title"
+        stat= stat or "stat"
+        subtitle=kwargs.get('subtitle',None)
         if shareax:
             fig,_ = plt.subplots(figsize=(8,6))
             axes = [_]*len(result)
             if log:_.set_yscale('log')
-            _.set_title("N={}, {}".format(self.samplesize()," ".join(["{:.0f}%".format(100*len(result[i])/(repeats)) for i in sorted(result.keys())])))
+            if subtitle:
+                _.set_title(subtitle)
+            else:
+                if repeats:
+                    _.set_title("N={}, {}".format(self.samplesize()," ".join(["{:.0f}%".format(100*len(result[i])/(repeats)) for i in sorted(result.keys())])))
         else:
             panel = (max(2,len(result.keys())//4+bool(len(result.keys())%4)),4)
             fig,axes = plt.subplots(*panel,figsize=(12,2.5*panel[0]))
             axes=[i for k in axes for i in k]
-        fig.suptitle('{} {}, Rpt={:.1E}'.format(title,stat,repeats),size=16)
-        xbingap=[]
-        for ax,(conc,resi),n in zip(axes,result.items(),self.samplesize()*2):
+        fig.suptitle('{} {},{}'.format(title,stat,bool(repeats)*"Rpt={:.1E}".format(repeats)),size=16)
+
+        for ax,(conc,resi),n in zip(axes,result.items(),self.samplesize()*100):
             title= conc if isinstance(conc,str) else '{:.2f}'.format(conc)
             labelcorrector=n if stat in ['residuals','predict'] else 1
 
@@ -597,11 +655,9 @@ class Analyzer(DataMixin):
                 ax.set_title("{}, N={}, {:.1f}%".format(title,n,100*len(resi)/(labelcorrector*repeats)))
                 ax.set_xlabel('{},bin={:.2E}'.format(stat,bingap[1]-bingap[0]))
                 ax.set_ylabel('Frequency')
-            else:
-                xbingap.append("{:.2E}".format(bingap[1]-bingap[0]))
         if shareax:
             ax.legend()
-            ax.set_xlabel('{},bin={}'.format(stat,','.join(xbingap)))
+            ax.set_xlabel(stat)
             ax.set_ylabel('Frequency')
         plt.tight_layout(rect=[0, 0, 1, 0.95])
         if save:
@@ -638,20 +694,24 @@ class Analyzer(DataMixin):
     def samplesize(self):
         return [len(self.data[i]) for i in self.x]
 
-    def analyze(self,multiset=True,method='linear',save=False,range=None,resample=True,**kwargs):
+    def analyze(self,option=1,multiset=True,method='linear',save=False,range=None,resample=True,**kwargs):
         if range: self=self.filter(*range)
+        if option==1: multiset=False
         fig,axes = plt.subplots(1,2,figsize=(12,5))
         fig.suptitle('Fit & Residual, N={}'.format(self.samplesize()),size=16)
-        self.plot_fit(ax=axes[0],multiset=multiset,method=method,**kwargs)
-        self.plot_resi(ax=axes[1],method=method,resample=resample,**kwargs)
+        self.plot_fit(option=option,ax=axes[0],multiset=multiset,method=method,**kwargs)
+        self.plot_resi(ax=axes[1],method=method,resample=resample,multiset=multiset,**kwargs)
         plt.tight_layout(rect=[0, 0, 1, 0.95])
         dfs=[self.mean(),self.mean_CV(),self.predict_mean(),self.predict_CV(method=method,resample=True),
                 self.predict_CI(method=method,resample=True)]
         df = pd.concat(dfs,axis=1)
-        # result = '\n'.join(["Raw signal Mean:",str(self.mean()),'Raw signal CV:',str(self.mean_CV()),
-        #                     "Predicted Fib Mean", str(self.predict_mean()),'Predicted Fib CV:',
-        #                     str(self.predict_CV(method=method,resample=True)),'Predicted Fib CI:',
-        #                     str(self.predict_CI(method=method,resample=True))])
+        fitr = pd.DataFrame(self.fit_result).rename_axis("Fit Result")
+        rawdf = pd.DataFrame(self.fill_na(self.data)).rename_axis("Raw Data")
+        dfs={"Analysis":df,"Fit Result":fitr,"Raw Data":rawdf}
+        if getattr(self,"log",None):
+            ana_log = {i:str(j) for i,j in self.log.items() }
+            ana_log = pd.DataFrame(ana_log.values(),index=ana_log.keys(),columns=["Value"]).rename_axis("Ana_Para")
+            dfs.update(AnaLog=ana_log)
         if save:
             save=save+plotbackend if isinstance(save,str) else 'ANA_{}_{}'.format(method,multiset*'ms')+plotbackend
             save =self.ifexist(save)
@@ -659,17 +719,30 @@ class Analyzer(DataMixin):
             plt.clf()
             plt.close('all')
             tosave = self.ifexist('Data_Analysis.xlsx')
-            writer=pd.ExcelWriter(tosave)
-            df.to_excel(writer,index=True,sheet_name='Analysis',engine='xlsxwriter')
-            for idx, col in enumerate(df):
-                series = df[col]
-                max_len = max(series.astype(str).map(len).max(), len(str(series.name)))+1
-                writer.sheets['Analysis'].set_column(idx, idx, max_len)
-            writer.save()
-            writer.close()
+            self._write_df_toxlsx(tosave,dfs)
             # with open(tosave,'wt') as f:
             #     f.write(result)
         else:
             plt.show()
             plt.clf()
-            return df
+            return dfs
+
+    def _write_df_toxlsx(self,tosave,dfs):
+        """
+        write multiple dataframe to a excel file.
+        """
+        writer=pd.ExcelWriter(tosave)
+        if isinstance(dfs,list):
+            dfs = dict(zip(["Sheet_"+str(i+1) for i,j in enumerate(dfs)],dfs))
+        elif isinstance(dfs,dict):
+            pass
+        else:
+            dfs = {"Analysis":dfs}
+        for sheetname,df in dfs.items():
+            df.to_excel(writer,index=True,sheet_name=sheetname,engine='xlsxwriter')
+            for idx, col in enumerate(df):
+                series = df[col]
+                max_len = max(series.astype(str).map(len).max(), len(str(series.name)))+1
+                writer.sheets[sheetname].set_column(idx, idx, max_len)
+        writer.save()
+        writer.close()

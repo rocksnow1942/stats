@@ -1,8 +1,7 @@
 import numpy as np
 from .cv_analysis import Analyzer
 import pandas as pd
-import os
-from os import path
+from os import path,getcwd
 
 class Simu(Analyzer):
     def __init__(self,file=None,conc=[0,0.25,0.5,0.75,1],sig=[100,125,150,175,200],
@@ -25,7 +24,7 @@ class Simu(Analyzer):
                 data[c]=list(np.random.normal(s,cv_*s/100.0,si))
             Analyzer.__init__(self,data)
             self.seed=dict(conc=conc,sig=sig,cv=cv,size=size)
-            self.save_loc= getattr(self,"save_loc",None) or os.getcwd()
+            self.save_loc= getattr(self,"save_loc",getcwd())
 
     def readfile(self,filename):
         df = pd.read_excel(filename)

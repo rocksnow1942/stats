@@ -146,7 +146,7 @@ def fit_method_fetcher(fit_method,**kwargs):
     elif fit_method == 'linear':
         func = linear
         bound_name = ['slope','b']
-        bounds_ =  tuple(list(i) for i in zip(kwarg_get(kwargs,'slope',[-1e3,1e3]),kwarg_get(kwargs,'b',[-1e3,1e3])))
+        bounds_ =  tuple(list(i) for i in zip(kwarg_get(kwargs,'slope',[-1e3,1e3+1]),kwarg_get(kwargs,'b',[-1e3,1e3+1])))
     elif fit_method == 'ic_50':
         func = ic_50
         bound_name = ['ic_50','Fmax','Fmin']
@@ -182,34 +182,17 @@ def fit_method_fetcher(fit_method,**kwargs):
         bounds_= tuple(list(i) for i in zip(kwarg_get(kwargs,'kd',m_),kwarg_get(kwargs,'Fmax',Fm_),kwarg_get(kwargs,'Fmin',Fm_)))
     return func, bounds_,bound_name
 
-def convert_x_y(x,y):
-    conc_set = set(x)
-    if len(x)!=len(conc_set):
-        new_x = list(conc_set)
-        new_y = [[] for i in range(len(new_x))]
-        for i,j in zip(x,y):
-            new_y[new_x.index(i)].append(j)
-        multi_set = True
-        y_mean = [np.mean(i) for i in new_y]
-        temp = [np.std(i,ddof=1) if len(i)>1 else 0 for i in new_y]
-        average_temp = np.mean([i for i in temp if i!=0])
-        y_stdev = [average_temp if i==0 else i for i in temp]
-    else:
-        new_x = x
-        y_mean = y
-        y_stdev = 0
-        multi_set = False
-    return new_x, y_mean, y_stdev, multi_set
 
 def fitting_data(x,y,fit_method,multi_set=True,**bounds):
     func,bounds_,bound_name = fit_method_fetcher(fit_method,**bounds)
     p_0 = [0.5*(i+j) for i,j in zip(bounds_[0],bounds_[1])]
-    if multi_set:
+    if multi_set and len(y[0])>1:
         y,y_stdev = [np.mean(i) for i in y],[np.std(i,ddof=1) if len(i)>1 else 0 for i in y]
         average_std = np.mean([i for i in y_stdev if i!=0])
         y_stdev = [average_std if i==0 else i for i in y_stdev]
 
     else:
+        multi_set=False
         x=[x[i] for i,j in enumerate(y) for k in j]
         y=[   k for i,j in enumerate(y) for k in j]
     try:
