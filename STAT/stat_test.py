@@ -71,6 +71,10 @@ class StatTools(Simu):
         return delta/n
 
     def MC_analysis(self,*args,n=1e6,**kwargs):
+        """
+        monte carlo analysis of mean or cv p value.
+        input: multiple data set or named input of data. (list or arrays)
+        """
         methoddict={"cv":self._mc_CV_p,"mean":self._mc_Mean_p}
         method=kwargs.pop('method','mean')
         try:func = methoddict[method]
